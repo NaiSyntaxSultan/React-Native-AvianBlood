@@ -1,13 +1,15 @@
-import React from 'react'
-import { Text, View } from 'react-native'
-import Navbar from '../components/Navbar'
+import React from "react";
+import { Text, View } from "react-native";
+import Navbar from "../components/Navbar";
 
 const Home = ({ navigation }) => {
   return (
-    <View>
-        <Navbar />
-    </View>
-  )
-}
+    <View style={{ flex: 1, position: "relative" }}>
+      <Text>Hello</Text>
 
-export default Home
+      <Navbar />
+    </View>
+  );
+};
+
+export default Home;

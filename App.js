@@ -8,6 +8,9 @@ import Login from "./screens/Login";
 import SignUp from "./screens/SignUp";
 import Home from "./screens/Home";
 import Welcome from "./screens/Welcome";
+import Predict from "./screens/Predict";
+import History from "./screens/History";
+import Profile from "./screens/Profile";
 
 const Stack = createNativeStackNavigator();
 
@@ -27,10 +30,14 @@ export default function App() {
   }
   return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'none', }}>
         <Stack.Screen name="Login" component={Login} />
         <Stack.Screen name="SignUp" component={SignUp} />
         <Stack.Screen name="Home" component={Home} />
+        <Stack.Screen name="Predict" component={Predict} />
+        <Stack.Screen name="History" component={History} />
+        <Stack.Screen name="Profile" component={Profile} />
+
       </Stack.Navigator>
     </NavigationContainer>
   );
