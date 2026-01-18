@@ -28,6 +28,7 @@ const MODE = {
   RECORD: "RECORD",
 };
 
+// mock ผลทำนายต่อรูป
 function mockPredictResult(imageId, stainType) {
   const base = Number(imageId) || 1;
   const thromb = (base % 5) + 3;
@@ -50,7 +51,7 @@ export default function Predict() {
   const [stain, setStain] = useState("Wright");
   const [images, setImages] = useState(MOCK_IMAGES);
 
-  // selection ใช้กับลบเท่านั้น
+  //selection ใช้กับลบและเลือกภาพเพื่อ predict 
   const [selectedIds, setSelectedIds] = useState([]);
 
   // แสดงผลทำนาย โชว์หลัง predict
@@ -70,7 +71,7 @@ export default function Predict() {
   });
 
   // selection
-  const toggleSelectForDelete = (id) => {
+  const toggleSelect = (id) => {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
@@ -84,8 +85,11 @@ export default function Predict() {
 
     const remain = images.filter((x) => !selectedIds.includes(x.id));
     setImages(remain);
+
+    // ล้าง selection
     setSelectedIds([]);
 
+    // ถ้าเคย predict แล้ว ให้ sync predictedList ด้วย
     if (hasPredicted) {
       const remainPred = predictedList.filter((x) =>
         remain.some((r) => r.id === x.id)
@@ -96,15 +100,20 @@ export default function Predict() {
     }
   };
 
-  // Predict All: ทำนายทุกภาพในหน้านั้น 
-  const predictAll = () => {
-    if (images.length === 0) {
-      Alert.alert("แจ้งเตือน", "ไม่มีรูปให้ทำนาย");
+  // Predict เฉพาะรูปที่เลือก
+  const predictSelected = () => {
+    if (selectedIds.length === 0) {
+      Alert.alert("แจ้งเตือน", "กรุณาเลือกรูปที่ต้องการทำนาย");
       return;
     }
 
-    // mockup ผลลัพธ์ต่อภาพ
-    const predicted = images.map((img) => ({
+    const selectedImages = images.filter((img) => selectedIds.includes(img.id));
+    if (selectedImages.length === 0) {
+      Alert.alert("แจ้งเตือน", "ไม่พบรูปที่เลือก");
+      return;
+    }
+
+    const predicted = selectedImages.map((img) => ({
       ...img,
       result: mockPredictResult(img.id, stain),
     }));
@@ -113,14 +122,14 @@ export default function Predict() {
     setHasPredicted(true);
     setIdx(0);
 
-    Alert.alert("Predict", `ทำนายทั้งหมด ${images.length} รูป (mock)`);
+    Alert.alert("Predict", `ทำนาย ${selectedImages.length} รูป`);
   };
 
   const current =
     predictedList[Math.min(idx, Math.max(predictedList.length - 1, 0))];
 
-  // ข้อมูลที่แสดงใน PredictionResultsCard
-  const mockResultCard = useMemo(() => {
+  // ข้อมูลสำหรับ PredictionResultsCard ทีละรูป
+  const resultCardData = useMemo(() => {
     const cellCount = current?.result?.cellCount ?? "-";
     const d0 = current?.result?.details?.[0];
     const d1 = current?.result?.details?.[1];
@@ -133,8 +142,14 @@ export default function Predict() {
         : "0/0",
       summary: [
         { label: "Cell Count:", value: String(cellCount) },
-        { label: d0?.cellType ?? "Thrombocyte", value: String(d0?.count ?? "-") },
-        { label: d1?.cellType ?? "Eosinophil", value: String(d1?.count ?? "-") },
+        {
+          label: d0?.cellType ?? "Thrombocyte",
+          value: String(d0?.count ?? "-"),
+        },
+        {
+          label: d1?.cellType ?? "Eosinophil",
+          value: String(d1?.count ?? "-"),
+        },
       ],
     };
   }, [current, idx, predictedList.length]);
@@ -150,14 +165,12 @@ export default function Predict() {
       stainType: stain,
       imageCount: predictedList.length,
 
-      // รูปทั้งหมดที่ทำนาย
       images: predictedList.map((img) => ({
         id: img.id,
         name: img.name,
         uri: img.uri,
       })),
 
-      // ผลทำนายต่อภาพ
       predictions: predictedList.map((img) => ({
         imageId: img.id,
         imageName: img.name,
@@ -173,7 +186,7 @@ export default function Predict() {
       createdAt: new Date().toISOString(),
     };
 
-    console.log("PENDING PAYLOAD (SEND TO DB LATER):", payload);
+    console.log("PENDING PAYLOAD:", payload);
 
     setPendingPayload(payload);
     setMode(MODE.RECORD);
@@ -181,7 +194,7 @@ export default function Predict() {
 
   const backToPredictMode = () => setMode(MODE.PREDICT);
 
-  // ---------- Save ในหน้า Record -> ส่งทั้งหมดเข้า DB
+  // -------------------- Record Save -> Firestore --------------------
   const saveRecordToDB = async () => {
     if (!pendingPayload) {
       Alert.alert("Error", "ไม่พบข้อมูลผลทำนาย");
@@ -209,7 +222,15 @@ export default function Predict() {
       await addDoc(collection(db, "records"), finalObject);
       Alert.alert("Success", "บันทึกเสร็จสิ้น ✅");
 
-      // reset กลับไปหน้า predict
+      // เอารูปที่ save แล้วออกจากหน้า prediction
+      const savedIds = pendingPayload.images.map((img) => img.id);
+      setImages((prev) => prev.filter((img) => !savedIds.includes(img.id)));
+
+      setSelectedIds([]);
+      setPredictedList([]);
+      setHasPredicted(false);
+      setIdx(0);
+
       setMode(MODE.PREDICT);
       setPendingPayload(null);
       setRecordForm({ chickenId: "", ageDays: "", weightG: "", note: "" });
@@ -234,7 +255,6 @@ export default function Predict() {
             <Text style={styles.backText}>← Back</Text>
           </TouchableOpacity>
 
-          {/* Results thumbnails (mock) */}
           <View style={styles.recordCard}>
             <Text style={styles.recordTitle}>Results of the Analysis</Text>
 
@@ -250,7 +270,6 @@ export default function Predict() {
             </View>
           </View>
 
-          {/* Form */}
           <View style={styles.formCard}>
             <Text style={styles.label}>Name/Chicken ID</Text>
             <TextInput
@@ -321,32 +340,34 @@ export default function Predict() {
       <ScrollView contentContainerStyle={{ paddingBottom: 110 }}>
         <StainSelector stain={stain} onChange={setStain} />
 
-        {/* เลือกรูปไว้ใช้กับลบเท่านั้น */}
+        {/* เลือกรูป (ใช้กับลบ และ Predict) */}
         <SelectedImagesGrid
           images={images}
           selectedIds={selectedIds}
-          onToggleSelect={toggleSelectForDelete}
+          onToggleSelect={toggleSelect}
           onDeleteSelected={deleteSelected}
         />
 
-        {/* Predict All ทำนายทั้งหมดใน grid */}
+        {/* Predict เฉพาะรูปที่เลือก */}
         <TouchableOpacity
           style={[
             styles.predictBtn,
-            images.length === 0 && styles.predictBtnDisabled,
+            selectedIds.length === 0 && styles.predictBtnDisabled,
           ]}
-          onPress={predictAll}
+          onPress={predictSelected}
           activeOpacity={0.9}
-          disabled={images.length === 0}
+          disabled={selectedIds.length === 0}
         >
-          <Text style={styles.predictText}>Predict All ({images.length})</Text>
+          <Text style={styles.predictText}>
+            Predict ({selectedIds.length})
+          </Text>
         </TouchableOpacity>
 
         {/* แสดงผลหลัง predict เท่านั้น */}
         {hasPredicted && (
           <PredictionResultsCard
             stain={stain}
-            result={mockResultCard}
+            result={resultCardData}
             totalCount={predictedList.length}
             onPrev={() => setIdx((p) => Math.max(p - 1, 0))}
             onNext={() =>
@@ -394,9 +415,18 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  gridWrap: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
+  gridWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
   gridItem: { width: "30%", marginBottom: 12 },
-  thumbBox: { width: "100%", aspectRatio: 1, backgroundColor: "#e5e7eb", borderRadius: 10 },
+  thumbBox: {
+    width: "100%",
+    aspectRatio: 1,
+    backgroundColor: "#e5e7eb",
+    borderRadius: 10,
+  },
   imgName: { marginTop: 6, fontSize: 10, color: "#6b7280" },
 
   formCard: {
@@ -405,7 +435,12 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 14,
   },
-  label: { fontWeight: "800", color: "#0F2C42", marginTop: 10, marginBottom: 6 },
+  label: {
+    fontWeight: "800",
+    color: "#0091ff",
+    marginTop: 10,
+    marginBottom: 6,
+  },
   input: {
     backgroundColor: "#fff",
     borderRadius: 10,
