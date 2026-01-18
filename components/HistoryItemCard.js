@@ -1,11 +1,11 @@
 import React from "react";
-import { View, Text, Image, StyleSheet } from "react-native";
+import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
 
-export default function HistoryItemCard({ item }) {
+export default function HistoryItemCard({ item, onPress = () => {} }) {
   const dtText = formatDateTime(item.datetime);
 
   return (
-    <View style={styles.card}>
+    <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={onPress}>
       <View style={styles.left}>
         <Text style={styles.title} numberOfLines={2}>
           {item.title}
@@ -33,7 +33,7 @@ export default function HistoryItemCard({ item }) {
           <View style={[styles.thumb, styles.thumbPlaceholder]} />
         )}
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -54,7 +54,6 @@ function Badge({ text, variant }) {
 }
 
 function formatDateTime(isoOrString) {
-  // รองรับทั้ง ISO string หรือ string ปกติ
   try {
     const d = new Date(isoOrString);
     if (isNaN(d.getTime())) return String(isoOrString);
@@ -99,8 +98,8 @@ const styles = StyleSheet.create({
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
     flexWrap: "wrap",
+    gap: 8,
   },
   datetime: {
     fontSize: 11,

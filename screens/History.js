@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { View, FlatList } from "react-native";
-import TabBar from "../components/TabBar";
+import { View, FlatList, Alert } from "react-native";
+
 import Navbar from "../components/Navbar";
-import HistoryItemCard from "../components/HistoryItemCard";
 import HeaderBar from "../components/HeaderBar";
+import HistoryItemCard from "../components/HistoryItemCard";
+import HistoryDetailView from "../components/HistoryDetailView";
 
 const MOCK_HISTORY = [
   {
@@ -42,11 +43,43 @@ const MOCK_HISTORY = [
 
 export default function History() {
   const [items, setItems] = useState([]);
+  const [selectedItem, setSelectedItem] = useState(null);
 
   useEffect(() => {
     setItems(MOCK_HISTORY);
   }, []);
 
+  const openDetail = (item) => setSelectedItem(item);
+  const backToList = () => setSelectedItem(null);
+
+  const deleteSelected = () => {
+    if (!selectedItem) return;
+
+    Alert.alert("Delete", "ต้องการลบรายการนี้ใช่ไหม?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          setItems((prev) => prev.filter((x) => x.id !== selectedItem.id));
+          setSelectedItem(null);
+        },
+      },
+    ]);
+  };
+
+  // DETAIL MODE
+  if (selectedItem) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "#fff" }}>
+        <HeaderBar title={"History Detail"} />
+        <HistoryDetailView item={selectedItem} onBack={backToList} onDelete={deleteSelected} />
+        <Navbar />
+      </View>
+    );
+  }
+
+  // LIST MODE
   return (
     <View style={{ flex: 1, backgroundColor: "#fff", position: "relative" }}>
       <HeaderBar title={"History"} />
@@ -59,7 +92,9 @@ export default function History() {
           paddingTop: 18,
           paddingBottom: 110,
         }}
-        renderItem={({ item }) => <HistoryItemCard item={item} />}
+        renderItem={({ item }) => (
+          <HistoryItemCard item={item} onPress={() => openDetail(item)} />
+        )}
       />
 
       <Navbar />
