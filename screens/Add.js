@@ -6,35 +6,126 @@ import Entypo from "@expo/vector-icons/Entypo";
 import { Feather } from "@expo/vector-icons"; 
 import * as ImagePicker from "expo-image-picker";
 import HeaderBar from "../components/HeaderBar";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { db } from "../firebaseConfig";
+import { collection, addDoc, serverTimestamp, getDocs } from "firebase/firestore";
 
 const Add = () => {
   const [pressed, setPressed] = useState(false);
   const [files, setFiles] = useState([]); 
+  const [uploading, setUploading] = useState(false);
 
   const formatSize = (bytes) => {
     if (!bytes) return "0 MB";
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   };
 
-  const simulateUpload = (newFiles) => {
-    newFiles.forEach((file) => {
-      let progress = 0;
-      const interval = setInterval(() => {
-        progress += 0.05; 
+  const uploadFilesToFirebase = async (filesToUpload) => {
+    if (uploading) return;
+    setUploading(true);
+
+    let userId = null;
+    try {
+        const jsonValue = await AsyncStorage.getItem("currentUser"); 
+        if (jsonValue) {
+            const userData = JSON.parse(jsonValue);
+            userId = userData.id;
+        }
+
+        if (!userId) {
+            Alert.alert("Error", "ไม่พบข้อมูล User ID");
+            setUploading(false);
+            return;
+        }
+    } catch (e) {
+        console.log("Error reading user data:", e);
+        setUploading(false);
+        return;
+    }
+
+    setFiles((currentFiles) =>
+      currentFiles.map((f) => {
+        if (filesToUpload.some(uploadFile => uploadFile.id === f.id)) {
+            return { ...f, status: "uploading" };
+        }
+        return f;
+      })
+    );
+
+    const batchId = Date.now().toString();
+
+    let successCount = 0;
+    
+    let currentIdCounter = 1;
+    try {
+        const snapshot = await getDocs(collection(db, "uploaded_images"));
+        currentIdCounter = snapshot.size + 1;
+    } catch (err) {
+        console.log(err);
+    }
+
+    for (const file of filesToUpload) {
+      try {
+        await addDoc(collection(db, "uploaded_images"), {
+            id: currentIdCounter, 
+            user_id: userId,
+            image_path: file.base64, 
+            original_filename: file.name,
+            batch_id: batchId, 
+            uploaded_at: serverTimestamp(),
+        });
+
+        currentIdCounter++;
+        successCount++;
+
         setFiles((currentFiles) =>
           currentFiles.map((f) => {
             if (f.id === file.id) {
-              if (progress >= 1) {
-                clearInterval(interval);
-                return { ...f, progress: 1, status: "completed" };
-              }
-              return { ...f, progress: progress };
+               return { ...f, progress: 1, status: "completed" };
             }
             return f;
           })
         );
-      }, 100);
-    });
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+      } catch (err) {
+        console.error("Save Error:", err);
+        setFiles((currentFiles) =>
+            currentFiles.map((f) => {
+              if (f.id === file.id) {
+                return { ...f, status: "pending" };
+              }
+              return f;
+            })
+          );
+      }
+    }
+
+    setUploading(false);
+
+    if (successCount > 0) {
+      Alert.alert(
+          "สำเร็จ", 
+          `บันทึกข้อมูลเรียบร้อยจำนวน ${successCount} รายการ`,
+          [
+              { 
+                  text: "ตกลง", 
+                  onPress: () => {
+                      setFiles([]); 
+                  }
+              }
+          ]
+      );
+    } else {
+      Alert.alert("ผิดพลาด", "ไม่สามารถบันทึกข้อมูลได้ (ไฟล์อาจใหญ่เกินไป)");
+    }
+  };
+
+  const handleUploadBtn = () => {
+    const pendingFiles = files.filter(f => f.status === "pending");
+    if (pendingFiles.length === 0) return;
+    uploadFilesToFirebase(pendingFiles);
   };
 
   const removeFile = (id) => {
@@ -45,14 +136,7 @@ const Add = () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (status !== "granted") {
-      Alert.alert(
-        "ไม่มีสิทธิ์เข้าถึงรูปภาพ",
-        "กรุณาเปิดสิทธิ์การเข้าถึงรูปภาพในหน้าตั้งค่า",
-        [
-          { text: "ยกเลิก", style: "cancel" },
-          { text: "ไปที่ตั้งค่า", onPress: () => Linking.openSettings() }
-        ]
-      );
+      Alert.alert("Permission denied", "Please allow access to your photos");
       return;
     }
 
@@ -60,13 +144,15 @@ const Add = () => {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images, 
         allowsMultipleSelection: true,
-        selectionLimit: Platform.OS === "ios" ? 100 : 0,
-        quality: 1,
+        selectionLimit: 100, 
+        quality: 0.3, 
+        base64: true,
       });
 
       if (!result.canceled) {
         const validAssets = [];
         const duplicateNames = [];
+        const oversizeFiles = []; 
 
         result.assets.forEach((asset) => {
           let assetName = asset.fileName;
@@ -75,17 +161,32 @@ const Add = () => {
              assetName = uriParts[uriParts.length - 1]; 
           }
 
+          if (asset.base64 && asset.base64.length > 1048487) {
+             oversizeFiles.push(assetName);
+             return; 
+          }
+
           const isDuplicate = files.some(existingFile => existingFile.name === assetName);
 
           if (isDuplicate) {
             duplicateNames.push(assetName);
           } else {
+            const base64String = `data:image/jpeg;base64,${asset.base64}`;
+
             validAssets.push({
               originalAsset: asset,
-              name: assetName 
+              name: assetName,
+              base64: base64String
             });
           }
         });
+
+        if (oversizeFiles.length > 0) {
+            Alert.alert(
+                "บางไฟล์มีขนาดใหญ่เกินไป", 
+                `ไฟล์เหล่านี้มีขนาดเกิน 1 MB และจะไม่ถูกเพิ่ม:\n\n${oversizeFiles.join('\n')}`
+            );
+        }
 
         if (duplicateNames.length > 0) {
             Alert.alert("พบไฟล์ซ้ำ!", `ไฟล์เหล่านี้มีชื่อซ้ำ:\n\n${duplicateNames.join('\n')}`);
@@ -96,20 +197,22 @@ const Add = () => {
         const newFiles = validAssets.map((item) => ({
           id: Date.now().toString() + "_" + Math.random().toString(36).substr(2, 9),
           uri: item.originalAsset.uri,
+          base64: item.base64,
           name: item.name, 
-          size: item.originalAsset.fileSize || 2500000, 
+          size: item.originalAsset.fileSize || 0, 
           progress: 0,
-          status: "uploading",
+          status: "pending",
         }));
 
         setFiles((prev) => [...prev, ...newFiles]);
-        simulateUpload(newFiles);
       }
     } catch (error) {
-      console.log("Gallery Error:", error);
+      console.log(error); 
       Alert.alert("Error", "เกิดข้อผิดพลาด: " + error.message);
     }
   };
+
+  const pendingCount = files.filter(f => f.status === "pending").length;
 
   return (
     <LinearGradient colors={["#E9E5E5", "#B8E1F8"]} style={{ flex: 1 }}>
@@ -140,7 +243,7 @@ const Add = () => {
           <Entypo name="upload-to-cloud" size={75} color="#5686E1" />
           <Text style={{ fontSize: 14, marginBottom: 7 }}>Upload Image</Text>
           <Text style={{ fontSize: 14, color: "#898989" }}>
-            Support: .jpg, .png (max 1 MB)
+            Support: .jpg, .png (Max 1 MB)
           </Text>
           <Text style={{ fontSize: 14, color: "#898989" }}>Max 100 images</Text>
         </Pressable>
@@ -178,17 +281,7 @@ const Add = () => {
 
               {file.status === "uploading" ? (
                 <View>
-                  <View style={{ height: 6, width: '100%', backgroundColor: '#E0E0E0', borderRadius: 3, overflow: 'hidden' }}>
-                    <LinearGradient
-                      colors={['#5686E1', '#8AB4F8']}
-                      start={{ x: 0, y: 0 }} 
-                      end={{ x: 1, y: 0 }}
-                      style={{ height: '100%', width: `${file.progress * 100}%` }}
-                    />
-                  </View>
-                  <Text style={{ fontSize: 10, color: "#898989", marginTop: 4 }}>
-                    {formatSize(file.size * file.progress)} of {formatSize(file.size)}
-                  </Text>
+                  <Text style={{ fontSize: 12, color: "#5686E1" }}>Uploading...</Text>
                 </View>
               ) : (
                 <Text style={{ fontSize: 12, color: "#898989" }}>
@@ -198,14 +291,14 @@ const Add = () => {
             </View>
 
             <View style={{ marginLeft: 10 }}>
-              {file.status === "uploading" ? (
-                <TouchableOpacity onPress={() => removeFile(file.id)}>
-                   <Feather name="x" size={20} color="#555" />
-                </TouchableOpacity>
-              ) : (
+              {file.status === "completed" ? (
                 <View style={{ backgroundColor: '#000', borderRadius: 12, width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}>
-                   <Feather name="check" size={14} color="#fff" />
+                    <Feather name="check" size={14} color="#fff" />
                 </View>
+              ) : (
+                <TouchableOpacity onPress={() => removeFile(file.id)} disabled={file.status === "uploading"}>
+                    <Feather name="x" size={20} color="#555" />
+                </TouchableOpacity>
               )}
             </View>
           </View>
@@ -216,18 +309,20 @@ const Add = () => {
             style={{
               width: 345,
               height: 45,
-              backgroundColor: "#989898",
+              backgroundColor: pendingCount > 0 ? "#5686E1" : "#989898", 
               borderRadius: 16,
               alignSelf: "center",
               justifyContent: "center",
               alignItems: "center",
               marginTop: 20, 
-              marginBottom: 10
+              marginBottom: 10,
+              opacity: uploading ? 0.7 : 1
             }}
-            onPress={() => Alert.alert("Upload", "กำลังเริ่มอัปโหลดไฟล์...")}
+            onPress={handleUploadBtn}
+            disabled={pendingCount === 0 || uploading}
           >
             <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>
-              Upload {files.length} file
+                {uploading ? "Uploading..." : (pendingCount > 0 ? `Upload ${pendingCount} file` : "Uploaded")}
             </Text>
           </TouchableOpacity>
         )}
