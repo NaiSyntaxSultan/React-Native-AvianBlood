@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Button,
   Image,
@@ -18,10 +18,8 @@ import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import FontAwesome5 from "@expo/vector-icons/FontAwesome5";
 import AntDesign from "@expo/vector-icons/AntDesign";
 
-import { db } from "../firebaseConfig";
-import { collection, query, where, getDocs } from "firebase/firestore";
-
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { checkUser } from "../services/firebase-service";
+import { saveLocalUser, getLocalUser } from "../services/sqlite-service";
 
 const bg = require("../assets/login.png");
 
@@ -30,6 +28,15 @@ const Login = ({ navigation }) => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
+  // ตรวจสอบว่าเคยล็อกอินค้างไว้ไหม
+  useEffect(() => {
+    const existingUser = getLocalUser();
+    if (existingUser) {
+      console.log("Checking Local User:", existingUser.name);
+      navigation.replace("Home");
+    }
+  }, []);
+
   const hdlLogin = async () => {
     if (email === "" || password === "") {
       Alert.alert("แจ้งเตือน", "กรุณากรอกอีเมลและรหัสผ่าน");
@@ -37,33 +44,36 @@ const Login = ({ navigation }) => {
     }
 
     try {
-      const usersRef = collection(db, "users");
-      const q = query(
-        usersRef,
-        where("email", "==", email),
-        where("password", "==", password)
-      );
+      const userData = await checkUser(email, password);
 
-      const querySnapshot = await getDocs(q);
+      if (userData) {
+        console.log("Login Success, saving to SQLite...");
+        const isSaved = saveLocalUser({
+          name: userData.name || "",
+          username: userData.username || "",
+          email: userData.email,
+          password: userData.password,
+          phone_number: userData.phone_number || "",
+          avatar_uri: userData.avatar_uri || "",
+          role: userData.role || "user",
+          firebase_id: userData.firebase_id,
+          is_synced: 1,
+        });
 
-      if (!querySnapshot.empty) {
-        Alert.alert("ยินดีต้อนรับ", "เข้าสู่ระบบสำเร็จ");
-
-        const userDoc = querySnapshot.docs[0];
-        const userData = userDoc.data();
-        const currentUser = { ...userData, id: userDoc.id };
-
-        await AsyncStorage.setItem("currentUser", JSON.stringify(currentUser));
-
-        setEmail("");
-        setPassword("");
-
-        navigation.navigate("Home");
+        if (isSaved) {
+          Alert.alert("ยินดีต้อนรับ", "เข้าสู่ระบบสำเร็จ");
+          setEmail("");
+          setPassword("");
+          navigation.replace("Home");
+        } else {
+          Alert.alert("Error", "เกิดข้อผิดพลาดในการบันทึกข้อมูลลงเครื่อง");
+        }
       } else {
-        Alert.alert("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
+        Alert.alert("ผิดพลาด", "อีเมลหรือรหัสผ่านไม่ถูกต้อง");
       }
     } catch (err) {
       console.error(err);
+      Alert.alert("Error", "เกิดข้อผิดพลาดในการเชื่อมต่อระบบ");
     }
   };
 

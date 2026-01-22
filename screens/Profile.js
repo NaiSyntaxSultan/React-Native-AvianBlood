@@ -7,48 +7,48 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  ActivityIndicator
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Navbar from "../components/Navbar";
-import { myStyle } from "../styles/myStyle";
 import HeaderBar from "../components/HeaderBar";
-
-import { doc, updateDoc } from "firebase/firestore";
-import { db } from "../firebaseConfig";
-
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
+
+import { updateUser} from "../services/firebase-service";
+import {
+  getLocalUser,
+  logoutLocalUser,
+  saveLocalUser,
+} from "../services/sqlite-service";
 
 export default function Profile({ navigation }) {
   const [isEditing, setIsEditing] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const [user, setUser] = useState({
-    name: "Dr.Strange",
-    username: "@dr.strangenajahahaha",
-    email: "strange121@gmail.com",
-    phone_number: "Enter your phone number",
-    password: "1423",
-    avatar_url: { uri: "https://i.pravatar.cc/300" },
-  });
-
-  const [draft, setDraft] = useState(user);
+  const [user, setUser] = useState(null);
+  const [draft, setDraft] = useState({});
 
   useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const savedUser = await AsyncStorage.getItem("currentUser");
-        if (savedUser) {
-          const userData = JSON.parse(savedUser);
-          setUser((prev) => ({ ...prev, ...userData }));
-          setDraft((prev) => ({ ...prev, ...userData }));
-        }
-      } catch (err) {
-        console.log("Error loading user:", err);
+    const loadUser = () => {
+      const localUser = getLocalUser();
+      if (localUser) {
+        console.log("Loaded Profile:", localUser.name);
+        setUser(localUser);
+        setDraft(localUser);
+      } else {
+        navigation.replace("Login");
       }
     };
     loadUser();
   }, []);
+
+  if (!user) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" color="#0F2C42" /> 
+      </View>
+    );
+  }
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -70,7 +70,7 @@ export default function Profile({ navigation }) {
 
     if (!result.canceled) {
       const base64Img = `data:image/jpeg;base64,${result.assets[0].base64}`;
-      setDraft({ ...draft, avatar_url: { uri: base64Img } });
+      setDraft({ ...draft, avatar_uri: base64Img });
     }
   };
 
@@ -91,48 +91,50 @@ export default function Profile({ navigation }) {
       return Alert.alert("Error", "Email ไม่ถูกต้อง");
 
     try {
-      if (!user.id) {
-        Alert.alert("Error", "ไม่พบ ID ผู้ใช้ ไม่สามารถบันทึกได้");
-        return;
-      }
+        await updateUser(user.firebase_id, {
+            name: draft.name,
+            username: draft.username,
+            email: draft.email,
+            password: draft.password,
+            phone_number: draft.phone_number,
+            avatar_uri: draft.avatar_uri,
+        });
 
-      const updateData = {
-        name: draft.name,
-        username: draft.username,
-        email: draft.email,
-        password: draft.password,
-        phone_number: draft.phone_number || "Enter your phone number",
-        avatar_url: draft.avatar_url,
-      };
+        const isSaved = saveLocalUser({
+            ...draft,
+            is_synced: 1
+        });
 
-      const userRef = doc(db, "users", user.id);
-      await updateDoc(userRef, updateData);
+        if (isSaved) {
+            setUser(draft);
+            setIsEditing(false);
+            setShowPassword(false);
+            Alert.alert("Success", "บันทึกข้อมูลเรียบร้อย");
+        } else {
+            Alert.alert("Warning", "บันทึกบน Cloud สำเร็จ แต่ลงเครื่องล้มเหลว");
+        }
 
-      const newUserData = { ...user, ...updateData };
-      await AsyncStorage.setItem("currentUser", JSON.stringify(newUserData));
-
-      setUser(newUserData);
-      setIsEditing(false);
-      setShowPassword(false);
-      Alert.alert("Success", "บันทึกข้อมูลเรียบร้อย");
     } catch (error) {
       console.error("Update Error:", error);
-      Alert.alert("Error", "เกิดข้อผิดพลาดในการบันทึก: " + error.message);
+      Alert.alert("Error", "เกิดข้อผิดพลาด: " + error.message);
     }
   };
 
   const handleLogout = async () => {
-    try {
-      // ล้างค่าทั้งหมดใน AsyncStorage
-      await AsyncStorage.clear();
-      navigation.reset({
-        index: 0,
-        routes: [{ name: "Login" }],
-      });
-    } catch (error) {
-      console.log("Logout Error:", error);
-      Alert.alert("Error", "เกิดข้อผิดพลาดในการออกจากระบบ");
-    }
+    Alert.alert("ยืนยันการออกจากระบบ", "คุณต้องการออกจากระบบใช่หรือไม่?", [
+      { text: "ยกเลิก", style: "cancel" },
+      {
+        text: "ออกจากระบบ",
+        style: "destructive",
+        onPress: () => {
+          logoutLocalUser();
+          navigation.reset({
+            index: 0,
+            routes: [{ name: "Login" }],
+          });
+        },
+      },
+    ]);
   };
 
   return (
@@ -149,7 +151,7 @@ export default function Profile({ navigation }) {
             >
               <View style={{ position: "relative" }}>
                 <Image
-                  source={isEditing ? draft.avatar_url : user.avatar_url}
+                  source={isEditing ? {uri: draft.avatar_uri} : {uri: user.avatar_uri}}
                   style={{
                     width: 86,
                     height: 86,
@@ -324,14 +326,9 @@ export default function Profile({ navigation }) {
           style={{ paddingHorizontal: 18, marginTop: 30, marginBottom: 20 }}
         >
           <TouchableOpacity
-            onPress={() => {
-              Alert.alert("Confirm Logout", "คุณต้องการออกจากระบบใช่หรือไม่?", [
-                { text: "Cancel", style: "cancel" },
-                { text: "Logout", style: "destructive", onPress: handleLogout },
-              ]);
-            }}
+            onPress={()=>handleLogout()}
             style={{
-              backgroundColor: "#EF4444", 
+              backgroundColor: "#EF4444",
               paddingVertical: 14,
               borderRadius: 12,
               alignItems: "center",
@@ -340,7 +337,7 @@ export default function Profile({ navigation }) {
               shadowOffset: { width: 0, height: 4 },
               shadowOpacity: 0.2,
               shadowRadius: 5,
-              elevation: 4, 
+              elevation: 4,
             }}
           >
             <View

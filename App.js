@@ -2,8 +2,6 @@ import React, { useState, useEffect } from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
-import { Text, View } from "react-native";
-import { myStyle } from "./styles/myStyle";
 import Login from "./screens/Login";
 import SignUp from "./screens/SignUp";
 import Home from "./screens/Home";
@@ -13,10 +11,17 @@ import Add from "./screens/Add";
 import History from "./screens/History";
 import Profile from "./screens/Profile";
 
+import { initDB } from "./services/sqlite-service"
+
 const Stack = createNativeStackNavigator();
 
 export default function App() {
   const [isShowSplash, setIsShowSplash] = useState(true);
+
+  useEffect(() => {
+    console.log("Initializing Database...");
+    initDB(); 
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {

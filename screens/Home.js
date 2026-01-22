@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Image, Text, View, ScrollView, RefreshControl } from "react-native";
-import { collection, query, orderBy, getDocs } from "firebase/firestore"; // Import เพิ่ม
-import { db } from "../firebaseConfig"; // Import เพิ่ม
+import { collection, query, orderBy, getDocs } from "firebase/firestore"; 
+import { db } from "../config/firebase-config"; 
 
 import Navbar from "../components/Navbar";
 import Post from "../components/Post";
@@ -9,14 +9,14 @@ const logo = require("../assets/logo1.png");
 
 const Home = ({ navigation, route }) => {
   const [refreshing, setRefreshing] = useState(false);
-  const [posts, setPosts] = useState([]); // State เก็บข้อมูล Predictions
+  const [posts, setPosts] = useState([]); 
   const scrollViewRef = useRef(null);
 
   // ฟังก์ชันดึงข้อมูล Predictions
   const fetchPosts = async () => {
     try {
       const q = query(
-        collection(db, "predictions"), // ชื่อตารางต้องตรงกับใน Firebase (ตัวเล็ก/ใหญ่สำคัญ)
+        collection(db, "predictions"), 
         orderBy("created_at", "desc")
       );
       const querySnapshot = await getDocs(q);

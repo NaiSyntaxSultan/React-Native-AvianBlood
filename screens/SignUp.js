@@ -10,14 +10,13 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   Platform,
-  Alert
+  Alert,
 } from "react-native";
 import { myStyle } from "../styles/myStyle";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
-import { db } from "../firebaseConfig";
-import { collection, getDocs, setDoc, doc } from "firebase/firestore";
+import { createUser } from "../services/firebase-service";
 
 const bg = require("../assets/signup.png");
 
@@ -42,31 +41,35 @@ const SignUp = ({ navigation }) => {
       return;
     }
 
-    const snapshot = await getDocs(collection(db, "users"));
-    const currentCount = snapshot.size;
-    const newIdNumber = (currentCount + 1).toString();
+    const newUserData = {
+      name: firstname + " " + lastname,
+      username: username,
+      email: email.trim().toLowerCase(),
+      password: password,
+      phone_number: "Enter your phone number",
+      avatar_uri: "",
+    };
 
     try {
-      await setDoc(doc(db, "users", newIdNumber), {
-        id: newIdNumber,
-        first_name: firstname,
-        last_name: lastname,
-        name: firstname+" "+lastname,
-        username: username,
-        email: email,
-        password: password,
-        phone_number: "Enter your phone number",
-        avatar_url: "",
-        role: "user",
-        created_at: new Date(),
-      });
-      setFirstname("");
-      setLastname("");
-      setUsername("");
-      setEmail("");
-      setPassword("");
+      const result = await createUser(newUserData);
 
-      navigation.navigate("Login");
+      if (result) {
+        Alert.alert("สำเร็จ", "สมัครสมาชิกเรียบร้อย", [
+          {
+            text: "ตกลง",
+            onPress: () => {
+              setFirstname("");
+              setLastname("");
+              setUsername("");
+              setEmail("");
+              setPassword("");
+              navigation.navigate("Login");
+            },
+          },
+        ]);
+      } else {
+        Alert.alert("ผิดพลาด", "ไม่สามารถสมัครสมาชิกได้ (อีเมลอาจซ้ำ)");
+      }
     } catch (err) {
       console.error(err);
     }

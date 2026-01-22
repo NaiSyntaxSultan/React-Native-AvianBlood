@@ -5,7 +5,7 @@ import HeaderBar from "../components/HeaderBar";
 import HistoryItemCard from "../components/HistoryItemCard";
 import HistoryDetailView from "../components/HistoryDetailView";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { db } from "../firebaseConfig";
+import { db } from "../config/firebase-config";
 import { collection, query, where, getDocs, deleteDoc, doc } from "firebase/firestore";
 
 export default function History() {

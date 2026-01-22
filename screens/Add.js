@@ -7,7 +7,7 @@ import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import HeaderBar from "../components/HeaderBar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { db } from "../firebaseConfig";
+import { db } from "../config/firebase-config";
 import { collection, addDoc, serverTimestamp, getDocs } from "firebase/firestore";
 
 const Add = () => {

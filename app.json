@@ -1,15 +1,13 @@
 {
   "expo": {
-    "name": "crud",
-    "slug": "crud",
+    "name": "AVIAN BLOOD",
+    "slug": "avianblood",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/logo1.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
@@ -17,13 +15,17 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/logo1.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.naikamon_47.avianblood"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/logo1.png"
     },
     "plugins": [
       [
@@ -31,7 +33,14 @@
         {
           "photosPermission": "The app accesses your photos to let you upload them."
         }
-      ]
-    ]
+      ],
+      "expo-sqlite"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d9f31beb-199d-4e6f-800d-e693d6b66ece"
+      }
+    },
+    "owner": "naikamon_47"
   }
 }

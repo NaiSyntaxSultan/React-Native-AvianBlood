@@ -16,7 +16,7 @@ import StainSelector from "../components/StainSelector";
 import SelectedImagesGrid from "../components/SelectedImagesGrid";
 import PredictionResultsCard from "../components/PredictionResultsCard";
 import RecordForm from "../components/RecordForm"; 
-import { db } from "../firebaseConfig";
+import { db } from "../config/firebase-config";
 import {
   addDoc,
   collection,

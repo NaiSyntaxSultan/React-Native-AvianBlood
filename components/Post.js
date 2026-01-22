@@ -7,10 +7,11 @@ import {
   TouchableOpacity, 
   Modal, 
   FlatList, 
-  StyleSheet,
-  SafeAreaView 
+  StyleSheet
 } from "react-native";
-import { db } from "../firebaseConfig";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+import { db } from "../config/firebase-config";
 import { collection, query, where, getDocs } from "firebase/firestore";
 
 const { width, height } = Dimensions.get("window");
