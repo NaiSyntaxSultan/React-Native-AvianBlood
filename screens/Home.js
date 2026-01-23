@@ -1,62 +1,90 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { Image, Text, View, ScrollView, RefreshControl } from "react-native";
-import { collection, query, orderBy, getDocs } from "firebase/firestore"; 
-import { db } from "../config/firebase-config"; 
+import {
+  Image,
+  Text,
+  View,
+  ScrollView,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
+} from "react-native";
 
 import Navbar from "../components/Navbar";
 import Post from "../components/Post";
 const logo = require("../assets/logo1.png");
 
+import { getLocalUser } from "../services/sqlite-service";
+import { readPost } from "../services/firebase-service";
+
 const Home = ({ navigation, route }) => {
   const [refreshing, setRefreshing] = useState(false);
-  const [posts, setPosts] = useState([]); 
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
   const scrollViewRef = useRef(null);
 
-  // ฟังก์ชันดึงข้อมูล Predictions
-  const fetchPosts = async () => {
-    try {
-      const q = query(
-        collection(db, "predictions"), 
-        orderBy("created_at", "desc")
-      );
-      const querySnapshot = await getDocs(q);
-      const fetchedPosts = [];
-      querySnapshot.forEach((doc) => {
-        fetchedPosts.push({ id: doc.id, ...doc.data() });
-      });
-      setPosts(fetchedPosts);
-    } catch (error) {
-      console.log("Error fetching posts:", error);
+  const loadData = async () => {
+    const fetchedPosts = await readPost();
+    setPosts(fetchedPosts);
+  };
+
+  const checkUserAndFetch = async () => {
+    setLoading(true);
+
+    const user = getLocalUser();
+
+    if (user) {
+      await loadData();
+    } else {
+      Alert.alert("เซสชันหมดอายุ", "โปรดเข้าสู่ระบบอีกครั้ง");
+      navigation.replace("Login");
+      return;
     }
+    setLoading(false);
   };
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchPosts();
+    await loadData();
     setRefreshing(false);
   }, []);
 
-  // ดึงข้อมูลเมื่อโหลดหน้า
+  // ทำงานครั้งแรกเมื่อเข้าหน้า Home
   useEffect(() => {
-    fetchPosts();
+    checkUserAndFetch();
   }, []);
 
   useEffect(() => {
     if (route.params?.refreshId) {
-        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-        onRefresh();
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      onRefresh();
     }
   }, [route.params?.refreshId]);
+
+  // แสดงหน้าจอโหลดก่อนเข้าหน้าหลัก
+  if (loading) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "white",
+        }}
+      >
+        <ActivityIndicator size="large" color="#11A4E1" />
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, position: "relative" }}>
       <ScrollView
         ref={scrollViewRef}
-        style={{ flex: 1, backgroundColor: 'white' }} 
+        style={{ flex: 1, backgroundColor: "white" }}
         contentContainerStyle={{ paddingBottom: 90 }}
         refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
+          <RefreshControl
+            refreshing={refreshing}
             onRefresh={onRefresh}
             progressViewOffset={50}
             tintColor="#11A4E1"
@@ -96,11 +124,12 @@ const Home = ({ navigation, route }) => {
         ))}
 
         {posts.length === 0 && (
-          <View style={{ padding: 20, alignItems: 'center' }}>
-            <Text style={{ color: 'gray' }}>กำลังโหลดข้อมูล หรือ ไม่มีโพสต์...</Text>
+          <View style={{ padding: 20, alignItems: "center" }}>
+            <Text style={{ color: "gray" }}>
+              กำลังโหลดข้อมูล หรือ ไม่มีโพสต์...
+            </Text>
           </View>
         )}
-
       </ScrollView>
 
       <Navbar />

@@ -6,9 +6,9 @@ import Entypo from "@expo/vector-icons/Entypo";
 import { Feather } from "@expo/vector-icons"; 
 import * as ImagePicker from "expo-image-picker";
 import HeaderBar from "../components/HeaderBar";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { db } from "../config/firebase-config";
-import { collection, addDoc, serverTimestamp, getDocs } from "firebase/firestore";
+
+import { getLocalUser } from "../services/sqlite-service";
+import { saveUploadedImage } from "../services/firebase-service";
 
 const Add = () => {
   const [pressed, setPressed] = useState(false);
@@ -26,14 +26,11 @@ const Add = () => {
 
     let userId = null;
     try {
-        const jsonValue = await AsyncStorage.getItem("currentUser"); 
-        if (jsonValue) {
-            const userData = JSON.parse(jsonValue);
-            userId = userData.id;
-        }
-
-        if (!userId) {
-            Alert.alert("Error", "ไม่พบข้อมูล User ID");
+        const localUser = getLocalUser();
+        if (localUser && localUser.firebase_id) {
+            userId = localUser.firebase_id;
+        } else {
+            Alert.alert("Error", "ไม่พบข้อมูลผู้ใช้งาน กรุณา Login ใหม่");
             setUploading(false);
             return;
         }
@@ -55,28 +52,15 @@ const Add = () => {
     const batchId = Date.now().toString();
 
     let successCount = 0;
-    
-    let currentIdCounter = 1;
-    try {
-        const snapshot = await getDocs(collection(db, "uploaded_images"));
-        currentIdCounter = snapshot.size + 1;
-    } catch (err) {
-        console.log(err);
-    }
 
     for (const file of filesToUpload) {
       try {
-        await addDoc(collection(db, "uploaded_images"), {
-            id: currentIdCounter, 
-            user_id: userId,
+        await saveUploadedImage ({
+            firebase_id: userId,
             image_path: file.base64, 
             original_filename: file.name,
-            batch_id: batchId, 
-            status: "Pending",
-            uploaded_at: serverTimestamp(),
+            batch_id: batchId,
         });
-
-        currentIdCounter++;
         successCount++;
 
         setFiles((currentFiles) =>
@@ -91,7 +75,7 @@ const Add = () => {
         await new Promise(resolve => setTimeout(resolve, 300));
 
       } catch (err) {
-        console.error("Save Error:", err);
+        console.error("Upload failed for file:", err);
         setFiles((currentFiles) =>
             currentFiles.map((f) => {
               if (f.id === file.id) {
@@ -113,7 +97,7 @@ const Add = () => {
               { 
                   text: "ตกลง", 
                   onPress: () => {
-                      setFiles([]); 
+                      setFiles((prev) => prev.filter(f => f.status !== "completed")); 
                   }
               }
           ]
