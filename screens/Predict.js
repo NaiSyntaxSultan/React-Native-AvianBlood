@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import {
   View,
   ScrollView,
@@ -6,16 +6,27 @@ import {
   Text,
   Alert,
   StyleSheet,
-  TextInput,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+
+import NetInfo from "@react-native-community/netinfo";
 
 import Navbar from "../components/Navbar";
 import HeaderBar from "../components/HeaderBar";
 import StainSelector from "../components/StainSelector";
 import SelectedImagesGrid from "../components/SelectedImagesGrid";
 import PredictionResultsCard from "../components/PredictionResultsCard";
-import RecordForm from "../components/RecordForm"; 
+import RecordForm from "../components/RecordForm";
+
+import {
+  getLocalUser,
+  savePendingDeleteImage,
+  savePendingPredict,
+  getPendingDeletes,
+  getPendingPredicts,
+  deletePendingDelete,
+  deletePendingPredict,
+} from "../services/sqlite-service";
+
 import { db } from "../config/firebase-config";
 import {
   addDoc,
@@ -34,16 +45,20 @@ const MODE = {
   RECORD: "RECORD",
 };
 
+// ✅ ประกาศตัวแปร Global Lock ไว้นอก Component (สำคัญมาก! เพื่อกัน Sync ซ้อนข้ามหน้าจอ)
+let isGlobalSyncing = false;
+
 function mockPredictResult(imageId, stainType) {
-  const numericId = imageId.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const base = numericId || 1;
-  const thromb = (base % 5) + 3;
-  const eos = (base % 6) + 2;
-  const total = thromb + eos;
+  const numericId = imageId
+    .split("")
+    .reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+  const thromb = (numericId % 5) + 3;
+  const eos = (numericId % 6) + 2;
 
   return {
     stainType,
-    cellCount: total,
+    cellCount: thromb + eos,
     details: [
       { cellType: "Thrombocyte", count: thromb, confidence: 0.9 },
       { cellType: "Eosinophil", count: eos, confidence: 0.9 },
@@ -60,6 +75,12 @@ export default function Predict() {
   const [predictedList, setPredictedList] = useState([]);
   const [idx, setIdx] = useState(0);
   const [pendingPayload, setPendingPayload] = useState(null);
+  const [isOnline, setIsOnline] = useState(true);
+
+  // States
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
   const [recordForm, setRecordForm] = useState({
     chickenId: "",
     ageDays: "",
@@ -67,44 +88,135 @@ export default function Predict() {
     note: "",
   });
 
-  useEffect(() => {
-    const fetchImages = async () => {
-      try {
-        const savedUser = await AsyncStorage.getItem("currentUser");
-        if (!savedUser) return;
+  // ฟังก์ชัน Sync ข้อมูล (ใช้ Global Lock)
+  const performAutoSync = async () => {
+    // 🔒 ล็อคด้วยตัวแปร Global ทันที
+    if (isGlobalSyncing) return;
+    isGlobalSyncing = true;
 
-        const userData = JSON.parse(savedUser);
-        const userId = userData.id;
+    try {
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) return;
 
-        if (!userId) return;
+      const pendingDeletes = await getPendingDeletes();
+      const pendingPredicts = await getPendingPredicts();
 
-        const q = query(
-          collection(db, "uploaded_images"),
-          where("user_id", "==", String(userId)),
-          where("status", "==", "Pending")
-        );
+      // ถ้าไม่มีงานค้างให้จบเลย
+      if (pendingDeletes.length === 0 && pendingPredicts.length === 0) return;
 
-        const querySnapshot = await getDocs(q);
-        const fetchedImages = [];
+      setIsAutoSyncing(true); // โชว์แถบเหลือง
 
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          fetchedImages.push({
-            id: doc.id,
-            uri: data.image_path,
-            name: data.original_filename || `img-${doc.id}.jpg`,
-            batch_id: data.batch_id,
-          });
-        });
-
-        setImages(fetchedImages);
-      } catch (error) {
-        console.error("Error fetching images:", error);
+      // 1. Sync การลบรูป
+      for (const d of pendingDeletes) {
+        try {
+          if (d.image_id) {
+            await deleteDoc(doc(db, "Uploaded_images", d.image_id));
+            await deletePendingDelete(d.id);
+          }
+        } catch (e) {
+          console.warn("Delete sync error", e);
+        }
       }
-    };
 
+      // 2. Sync การทำนาย
+      for (const p of pendingPredicts) {
+        try {
+          const payload = JSON.parse(p.payload);
+          let isDuplicate = false;
+
+          // เช็คซ้ำใน Firebase ก่อนบันทึก
+          if (payload.batch_id) {
+            const qCheck = query(
+              collection(db, "Predictions"),
+              where("batch_id", "==", payload.batch_id)
+            );
+            const snapCheck = await getDocs(qCheck);
+            if (!snapCheck.empty) {
+              isDuplicate = true;
+              console.log("AutoSync: ข้ามการบันทึกซ้ำสำหรับ batch:", payload.batch_id);
+            }
+          }
+
+          // ถ้าไม่ซ้ำ ถึงจะบันทึก
+          if (!isDuplicate) {
+            await addDoc(collection(db, "Predictions"), {
+              ...payload,
+              status: "Completed",
+              created_at: serverTimestamp(),
+            });
+
+            const batch = writeBatch(db);
+            payload.images.forEach((id) => {
+              batch.update(doc(db, "Uploaded_images", id), {
+                status: "Predict",
+              });
+            });
+            await batch.commit();
+          }
+
+          // ✅ ลบออกจาก SQLite เสมอ (เมื่อจบกระบวนการ ไม่ว่าจะบันทึกใหม่ หรือข้ามเพราะซ้ำ)
+          await deletePendingPredict(p.id);
+          
+        } catch (e) {
+          console.warn("Predict sync error", e);
+          // กรณี Error จะไม่ลบออกจาก SQLite เพื่อให้รอบหน้ามาลองใหม่
+        }
+      }
+    } catch (err) {
+      console.error("AutoSync Error:", err);
+    } finally {
+      // 🔓 ปลดล็อค Global เมื่อเสร็จสิ้นภารกิจ
+      isGlobalSyncing = false;
+      setIsAutoSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    performAutoSync();
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const online = !!state.isConnected && !!state.isInternetReachable;
+      setIsOnline(online);
+      if (online) {
+        performAutoSync();
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     fetchImages();
   }, []);
+
+  const fetchImages = async () => {
+    try {
+      const user = getLocalUser();
+      if (!user?.firebase_id) return;
+
+      const q = query(
+        collection(db, "Uploaded_images"),
+        where("firebase_id", "==", String(user.firebase_id)),
+        where("status", "==", "Pending")
+      );
+
+      const snap = await getDocs(q);
+      const list = [];
+
+      snap.forEach((docSnap) => {
+        const d = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          uri: d.image_path,
+          name: d.original_filename || docSnap.id,
+          batch_id: d.batch_id || null,
+        });
+      });
+
+      setImages(list);
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Error", "โหลดรูปไม่สำเร็จ");
+    }
+  };
 
   const toggleSelect = (id) => {
     setSelectedIds((prev) =>
@@ -113,215 +225,158 @@ export default function Predict() {
   };
 
   const deleteSelected = async () => {
-    if (selectedIds.length === 0) {
-      Alert.alert("แจ้งเตือน", "กรุณาเลือกรูปที่ต้องการลบ");
-      return;
-    }
+    if (!selectedIds.length) return;
 
-    try {
-      await Promise.all(
-        selectedIds.map((id) => deleteDoc(doc(db, "uploaded_images", id)))
-      );
+    const user = getLocalUser();
 
-      const remain = images.filter((x) => !selectedIds.includes(x.id));
-      setImages(remain);
-      setSelectedIds([]);
-
-      if (hasPredicted) {
-        const remainPred = predictedList.filter((x) =>
-          remain.some((r) => r.id === x.id)
-        );
-        setPredictedList(remainPred);
-        setIdx(0);
-        if (remainPred.length === 0) setHasPredicted(false);
+    if (!isOnline) {
+      for (const id of selectedIds) {
+        await savePendingDeleteImage({
+          firebase_id: user.firebase_id,
+          image_id: id,
+        });
       }
-    } catch (error) {
-      console.error("Error deleting images:", error);
-      Alert.alert("Error", "ไม่สามารถลบภาพจากฐานข้อมูลได้");
+    } else {
+      await Promise.all(
+        selectedIds.map((id) => deleteDoc(doc(db, "Uploaded_images", id)))
+      );
     }
+
+    setImages((prev) => prev.filter((i) => !selectedIds.includes(i.id)));
+    setSelectedIds([]);
   };
 
   const predictSelected = () => {
-    if (selectedIds.length === 0) {
-      Alert.alert("แจ้งเตือน", "กรุณาเลือกรูปที่ต้องการทำนาย");
-      return;
-    }
+    if (!selectedIds.length) return;
 
-    const selectedImages = images.filter((img) => selectedIds.includes(img.id));
-    if (selectedImages.length === 0) {
-      Alert.alert("แจ้งเตือน", "ไม่พบรูปที่เลือก");
-      return;
-    }
+    const selected = images.filter((i) => selectedIds.includes(i.id));
+    setPredictedList(
+      selected.map((img) => ({
+        ...img,
+        result: mockPredictResult(img.id, stain),
+      }))
+    );
 
-    const predicted = selectedImages.map((img) => ({
-      ...img,
-      result: mockPredictResult(img.id, stain),
-      batch_id: img.batch_id,
-    }));
-
-    setPredictedList(predicted);
     setHasPredicted(true);
     setIdx(0);
-
-    Alert.alert("Predict", `ทำนาย ${selectedImages.length} รูป`);
   };
 
-  const current =
-    predictedList[Math.min(idx, Math.max(predictedList.length - 1, 0))];
+  const current = predictedList[idx];
 
   const resultCardData = useMemo(() => {
-    const cellCount = current?.result?.cellCount ?? "-";
-    const d0 = current?.result?.details?.[0];
-    const d1 = current?.result?.details?.[1];
-
+    if (!current) return null;
     return {
-      imageName: current?.name ?? "-",
-      previewUri: current?.uri ?? "https://picsum.photos/seed/empty/200",
-      pageText: predictedList.length
-        ? `${idx + 1}/${predictedList.length}`
-        : "0/0",
+      imageName: current.name,
+      previewUri: current.uri,
+      pageText: `${idx + 1}/${predictedList.length}`,
       summary: [
-        { label: "Cell Count:", value: String(cellCount) },
-        {
-          label: d0?.cellType ?? "Thrombocyte",
-          value: String(d0?.count ?? "-"),
-        },
-        {
-          label: d1?.cellType ?? "Eosinophil",
-          value: String(d1?.count ?? "-"),
-        },
+        { label: "Cell Count", value: current.result.cellCount },
+        ...current.result.details.map((d) => ({
+          label: d.cellType,
+          value: d.count,
+        })),
       ],
     };
   }, [current, idx, predictedList.length]);
 
   const goToRecordMode = () => {
-    if (!hasPredicted || predictedList.length === 0) {
-      Alert.alert("แจ้งเตือน", "กรุณากด Predict ก่อน");
-      return;
-    }
-
-    const payload = {
-      stainType: stain,
-      imageCount: predictedList.length,
-      batchId: predictedList[0]?.batch_id || null,
-      images: predictedList.map((img) => ({
-        id: img.id,
-        name: img.name,
-        uri: img.uri,
-      })),
-      predictions: predictedList.map((img) => ({
-        imageId: img.id,
-        imageName: img.name,
-        stainType: img.result?.stainType ?? stain,
-        cellCount: img.result?.cellCount ?? 0,
-        cells: (img.result?.details ?? []).map((c) => ({
-          type: c.cellType,
-          count: c.count,
-          confidence: c.confidence,
-        })),
-      })),
-    };
-
-    setPendingPayload(payload);
+    setPendingPayload({ images: predictedList });
     setMode(MODE.RECORD);
   };
 
-  const backToPredictMode = () => setMode(MODE.PREDICT);
-
   const saveRecordToDB = async () => {
-    if (!pendingPayload) {
-      Alert.alert("Error", "ไม่พบข้อมูลผลทำนาย");
+    if (isSaving) return; 
+    if (!pendingPayload?.images?.length) {
+      Alert.alert("Error", "ไม่พบข้อมูลที่ต้องบันทึก");
       return;
     }
-    if (!recordForm.chickenId.trim()) {
-      Alert.alert("แจ้งเตือน", "กรุณากรอก Name/Chicken ID");
-      return;
-    }
+
+    const user = getLocalUser();
+    if (!user) return;
+
+    setIsSaving(true);
 
     try {
-      const savedUser = await AsyncStorage.getItem("currentUser");
-      const userData = savedUser ? JSON.parse(savedUser) : {};
-      const userId = userData.id;
-
-      if (!userId) {
-        Alert.alert("Error", "ไม่พบข้อมูลผู้ใช้");
-        return;
+      let refBatchId = pendingPayload.images.length > 0 ? pendingPayload.images[0].batch_id : null;
+      if (!refBatchId) {
+         refBatchId = `generated_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       }
 
-      const predictionsRef = collection(db, "predictions");
-      const snapshot = await getDocs(predictionsRef);
-      const newId = snapshot.size + 1;
-
-      let totalCellCount = 0;
-      let allCellTypes = [];
-      let allConfidences = [];
-
-      pendingPayload.predictions.forEach((p) => {
-        totalCellCount += p.cellCount;
-        p.cells.forEach((c) => {
-          if (!allCellTypes.includes(c.type)) {
-            allCellTypes.push(c.type);
-          }
-          allConfidences.push(c.confidence);
-        });
-      });
-
-      const finalObject = {
-        id: newId,
-        user_id: String(userId),
-        stain_type: pendingPayload.stainType,
-        number_of_predicted: pendingPayload.imageCount,
-        status: "Completed",
-        created_at: serverTimestamp(),
-        batch_id: pendingPayload.batchId,
-        cell_count: totalCellCount,
-        cell_type: allCellTypes,
-        confidence: allConfidences,
-        chicken_id: recordForm.chickenId.trim(),
-        age: recordForm.ageDays ? Number(recordForm.ageDays) : null,
-        weight: recordForm.weightG ? Number(recordForm.weightG) : null,
-        note: recordForm.note.trim(),
+      const payload = {
+        firebase_id: user.firebase_id,
+        stain_type: stain,
+        chicken_id: recordForm.chickenId,
+        age: Number(recordForm.ageDays),
+        weight: Number(recordForm.weightG),
+        note: recordForm.note,
+        images: pendingPayload.images.map((i) => i.id),
+        batch_id: refBatchId, 
       };
 
-      await addDoc(predictionsRef, finalObject);
+      if (!isOnline) {
+        // บันทึกออฟไลน์
+        await savePendingPredict(user.firebase_id, payload);
+        Alert.alert("บันทึกออฟไลน์", "ข้อมูลจะ Sync เมื่อออนไลน์");
+      } else {
+        // บันทึกออนไลน์ (เช็คซ้ำด้วย)
+        let isDuplicate = false;
+        if (payload.batch_id) {
+            const qCheck = query(
+              collection(db, "Predictions"),
+              where("batch_id", "==", payload.batch_id)
+            );
+            const snapCheck = await getDocs(qCheck);
+            if (!snapCheck.empty) {
+              isDuplicate = true;
+            }
+        }
 
-      const batch = writeBatch(db);
-      pendingPayload.images.forEach((img) => {
-        const imgRef = doc(db, "uploaded_images", img.id);
-        batch.update(imgRef, { status: "Predict" });
-      });
-      await batch.commit();
+        if (isDuplicate) {
+            console.log("Online Save: Duplicate found, skipping.");
+            Alert.alert("แจ้งเตือน", "ข้อมูลชุดนี้ถูกบันทึกไปแล้ว"); 
+        } else {
+            await addDoc(collection(db, "Predictions"), {
+              ...payload,
+              status: "Completed",
+              created_at: serverTimestamp(),
+            });
 
-      Alert.alert("Success", "บันทึกเสร็จสิ้น ✅");
+            const batch = writeBatch(db);
+            payload.images.forEach((id) => {
+              batch.update(doc(db, "Uploaded_images", id), {
+                status: "Predict",
+              });
+            });
+            await batch.commit();
+            Alert.alert("สำเร็จ", "บันทึกข้อมูลเรียบร้อยแล้ว");
+        }
+      }
 
-      const savedIds = pendingPayload.images.map((img) => img.id);
-      setImages((prev) => prev.filter((img) => !savedIds.includes(img.id)));
-
-      setSelectedIds([]);
-      setPredictedList([]);
+      setImages((prev) => prev.filter((i) => !payload.images.includes(i.id)));
       setHasPredicted(false);
-      setIdx(0);
-
+      setPredictedList([]);
+      setSelectedIds([]);
       setMode(MODE.PREDICT);
-      setPendingPayload(null);
-      setRecordForm({ chickenId: "", ageDays: "", weightG: "", note: "" });
-    } catch (e) {
-      console.error(e);
-      Alert.alert("Error", "บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง");
+
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", "เกิดข้อผิดพลาดในการบันทึก");
+    } finally {
+      setIsSaving(false);
     }
   };
 
   if (mode === MODE.RECORD) {
     return (
       <View style={{ flex: 1, backgroundColor: "#cfe9f9" }}>
-        <HeaderBar title={"Record"} />
-        <ScrollView contentContainerStyle={{ paddingBottom: 110 }}>
-          <RecordForm 
+        <HeaderBar title="Record" />
+        <ScrollView>
+          <RecordForm
             selectedImages={pendingPayload?.images || []}
             form={recordForm}
             setForm={setRecordForm}
             onSave={saveRecordToDB}
-            onBack={backToPredictMode}
+            onBack={() => !isSaving && setMode(MODE.PREDICT)}
           />
         </ScrollView>
         <Navbar />
@@ -331,8 +386,23 @@ export default function Predict() {
 
   return (
     <View style={{ flex: 1, backgroundColor: "#cfe9f9" }}>
-      <HeaderBar title={"Prediction"} />
-      <ScrollView contentContainerStyle={{ paddingBottom: 110 }}>
+      <HeaderBar title="Prediction" />
+
+      {isAutoSyncing && (
+        <View
+          style={{
+            backgroundColor: "#FFD700",
+            padding: 6,
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ fontSize: 12, fontWeight: "bold", color: "black" }}>
+            ⚡ กำลังซิงค์ข้อมูลการทำนาย...
+          </Text>
+        </View>
+      )}
+
+      <ScrollView>
         <StainSelector stain={stain} onChange={setStain} />
 
         <SelectedImagesGrid
@@ -342,15 +412,7 @@ export default function Predict() {
           onDeleteSelected={deleteSelected}
         />
 
-        <TouchableOpacity
-          style={[
-            styles.predictBtn,
-            selectedIds.length === 0 && styles.predictBtnDisabled,
-          ]}
-          onPress={predictSelected}
-          activeOpacity={0.9}
-          disabled={selectedIds.length === 0}
-        >
+        <TouchableOpacity style={styles.predictBtn} onPress={predictSelected}>
           <Text style={styles.predictText}>
             Predict ({selectedIds.length})
           </Text>
@@ -363,9 +425,7 @@ export default function Predict() {
             totalCount={predictedList.length}
             onPrev={() => setIdx((p) => Math.max(p - 1, 0))}
             onNext={() =>
-              setIdx((p) =>
-                Math.min(p + 1, Math.max(predictedList.length - 1, 0))
-              )
+              setIdx((p) => Math.min(p + 1, predictedList.length - 1))
             }
             onSaveAll={goToRecordMode}
           />
@@ -378,14 +438,15 @@ export default function Predict() {
 
 const styles = StyleSheet.create({
   predictBtn: {
-    marginTop: 16,
-    marginHorizontal: 50,
+    margin: 20,
     height: 44,
     borderRadius: 999,
     backgroundColor: "#9ca3af",
     alignItems: "center",
     justifyContent: "center",
   },
-  predictBtnDisabled: { opacity: 0.6 },
-  predictText: { color: "#fff", fontWeight: "900" },
+  predictText: {
+    color: "#fff",
+    fontWeight: "900",
+  },
 });

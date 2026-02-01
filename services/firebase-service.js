@@ -11,6 +11,7 @@ import {
   addDoc,
   serverTimestamp,
   deleteDoc,
+  getDoc
 } from "firebase/firestore";
 
 export const createUser = async (data) => {
@@ -80,14 +81,60 @@ export const updateUser = async (firebaseId, data) => {
 export const readPost = async () => {
   try {
     const q = query(
-      collection(db, "predictions"),
-      orderBy("created_at", "desc"),
+      collection(db, "Predictions"),
+      orderBy("created_at", "desc")
     );
     const querySnapshot = await getDocs(q);
-    const posts = [];
-    querySnapshot.forEach((doc) => {
-      posts.push({ id: doc.id, ...doc.data() });
-    });
+
+    const posts = await Promise.all(
+      querySnapshot.docs.map(async (docSnapshot) => {
+        const predictionData = docSnapshot.data();
+        const predictionId = docSnapshot.id;
+
+        // 1. ดึงข้อมูล User (ชื่อ, รูปโปรไฟล์)
+        let userData = { name: "Unknown", avatar_uri: null };
+        if (predictionData.firebase_id) {
+          try {
+            const userDocRef = doc(db, "Users", predictionData.firebase_id);
+            // ✅ บรรทัดนี้ต้องการ getDoc ที่ import มา
+            const userSnap = await getDoc(userDocRef); 
+            if (userSnap.exists()) {
+              userData = userSnap.data();
+            }
+          } catch (e) {
+            console.log("Error fetching user:", e);
+          }
+        }
+
+        // 2. ดึงข้อมูลรูปภาพ (Uploaded_images)
+        const imagesData = [];
+        if (predictionData.images && Array.isArray(predictionData.images)) {
+          await Promise.all(
+            predictionData.images.map(async (imageId) => {
+              try {
+                const imgDocRef = doc(db, "Uploaded_images", imageId);
+                // ✅ บรรทัดนี้ต้องการ getDoc ที่ import มา
+                const imgSnap = await getDoc(imgDocRef); 
+                if (imgSnap.exists()) {
+                  imagesData.push(imgSnap.data()); 
+                }
+              } catch (e) {
+                console.log("Error fetching image:", e);
+              }
+            })
+          );
+        }
+
+        // 3. รวมข้อมูลเป็น Object เดียว
+        return {
+          id: predictionId,
+          ...predictionData,
+          user: userData, 
+          uploaded_images: imagesData,
+        };
+      })
+    );
+
     return posts;
   } catch (err) {
     console.error("Read Post Error:", err);
@@ -110,23 +157,29 @@ export const getUploadedImageCount = async () => {
 // ฟังก์ชันบันทึกข้อมูลรูปภาพลง Firestore
 export const saveUploadedImage = async (data) => {
   try {
+    const docId = `${data.firebase_id}_${data.batch_id}_${data.original_filename}`;
+    const imageRef = doc(db, "Uploaded_images", docId);
 
-    const payload = {
-      firebase_id: data.firebase_id,
-      batch_id: data.batch_id,
-      image_path: data.image_path,
-      original_filename: data.original_filename,                 
-      status: "Pending",             
-      uploaded_at: serverTimestamp(),             
-    }
+    await setDoc(
+      imageRef,
+      {
+        firebase_id: data.firebase_id,
+        batch_id: data.batch_id,
+        image_path: data.image_path,
+        original_filename: data.original_filename,
+        status: "Pending",
+        uploaded_at: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
-    await addDoc(collection(db, "Uploaded_images"), payload);
     return true;
   } catch (err) {
     console.error("Save Image Error:", err);
     throw err;
   }
 };
+
 
 // ฟังก์ชันดึงประวัติและจัดกลุ่มข้อมูล
 export const getHistoryData = async (userId) => {

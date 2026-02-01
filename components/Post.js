@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { 
   View, 
   Text, 
@@ -14,179 +14,146 @@ import { SafeAreaView } from "react-native-safe-area-context";
 const { width, height } = Dimensions.get("window");
 
 const Post = ({ data }) => {
-  // const [user, setUser] = useState(null);
-  // const [postImages, setPostImages] = useState([]);
+  // ✅ เพิ่มตรงนี้: ถ้าไม่มี data ส่งมา ให้จบการทำงานทันที ไม่ต้องแสดงผลอะไร
+  if (!data) return null;
+
+  const user = data?.user || {}; 
+  const postImages = data?.uploaded_images || [];
   
-  // // State สำหรับควบคุม Gallery Modal
-  // const [modalVisible, setModalVisible] = useState(false);
-  // const [initialIndex, setInitialIndex] = useState(0);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [initialIndex, setInitialIndex] = useState(0);
 
-  // const formatDate = (timestamp) => {
-  //   if (!timestamp) return "";
-  //   const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-  //   return date.toLocaleDateString("th-TH") + " " + date.toLocaleTimeString("th-TH", { hour: '2-digit', minute: '2-digit' });
-  // };
+  const formatDate = (timestamp) => {
+    if (!timestamp) return "";
+    let date;
+    
+    if (timestamp.toDate) {
+      date = timestamp.toDate();
+    } else if (timestamp.seconds) {
+      date = new Date(timestamp.seconds * 1000);
+    } else {
+      date = new Date(timestamp);
+    }
+    return date.toLocaleDateString("th-TH") + " " + date.toLocaleTimeString("th-TH", { hour: '2-digit', minute: '2-digit' });
+  };
 
-  // useEffect(() => {
-  //   const fetchPostData = async () => {
-  //     if (!data) return;
+  const openGallery = (index) => {
+    setInitialIndex(index);
+    setModalVisible(true);
+  };
 
-  //     try {
-  //       if (data.user_id) {
-  //         const userQ = query(
-  //           collection(db, "users"), 
-  //           where("id", "==", data.user_id)
-  //         );
-  //         const userSnap = await getDocs(userQ);
-  //         if (!userSnap.empty) {
-  //           setUser(userSnap.docs[0].data());
-  //         }
-  //       }
+  const renderImages = () => {
+    if (postImages.length === 0) return null;
 
-  //       if (data.batch_id) {
-  //         const imgQ = query(
-  //           collection(db, "uploaded_images"),
-  //           where("batch_id", "==", data.batch_id)
-  //         );
-  //         const imgSnap = await getDocs(imgQ);
-  //         const imgs = imgSnap.docs.map(doc => doc.data());
-  //         setPostImages(imgs);
-  //       }
+    const imagesToShow = postImages.slice(0, 4);
+    const remainingCount = postImages.length - 4;
 
-  //     } catch (error) {
-  //       console.log("Error fetching post details:", error);
-  //     }
-  //   };
+    return (
+      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+        {imagesToShow.map((item, index) => (
+          <TouchableOpacity 
+            key={index} 
+            style={{ width: width / 2, height: width / 2 }}
+            activeOpacity={0.9}
+            onPress={() => openGallery(index)}
+          >
+            <Image
+              source={{ uri: item.image_path }} 
+              style={{
+                width: "100%", 
+                height: "100%", 
+                borderWidth: 0.5,
+                borderColor: "#fff",
+              }}
+            />
+            {index === 3 && remainingCount > 0 && (
+              <View
+                style={{
+                  position: "absolute",
+                  top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: "rgba(0,0,0,0.5)",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: "#fff", fontSize: 24, fontWeight: "bold" }}>
+                  +{remainingCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  };
 
-  //   fetchPostData();
-  // }, [data]);
+  return (
+    <View style={{ marginTop: 7 }}>
+      <View style={{ height: 1, backgroundColor: "#11A4E1", opacity: 0.2, width: "100%" }} />
 
-  // // ฟังก์ชันเปิด Gallery
-  // const openGallery = (index) => {
-  //   setInitialIndex(index);
-  //   setModalVisible(true);
-  // };
+      <View>
+        <View style={{ flexDirection: "row", alignItems: "center", padding: 12 }}>
+          <Image
+            source={{ uri: user.avatar_uri || "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQhA_VuqI8DqCHBMlOg_Y6KMjEuJsX_prJX9g&s" }}
+            style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: "#eee" }}
+          />
+          <View style={{ marginLeft: 10 }}>
+            <Text style={{ fontWeight: "bold", fontSize: 16, color: "#000" }}>
+              {user.name || "Unknown User"}
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text style={{ color: "gray", fontSize: 12 }}>
+                {formatDate(data?.created_at)}
+              </Text>
+              <Text style={{ color: "gray", fontSize: 12, marginHorizontal: 4 }}>•</Text>
+              <Text style={{ color: "gray", fontSize: 10 }}>🌍</Text>
+            </View>
+          </View>
+        </View>
 
-  // // ส่วนแสดงผลรูปภาพในหน้า Post ปกติ
-  // const renderImages = () => {
-  //   if (postImages.length === 0) return null;
+        <Text style={{ paddingHorizontal: 12, marginBottom: 10, fontSize: 15, color: "#000" }}>
+          {data?.note || ""}
+        </Text>
 
-  //   const imagesToShow = postImages.slice(0, 4);
-  //   const remainingCount = postImages.length - 4;
+        {renderImages()}
+      </View>
 
-  //   return (
-  //     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-  //       {imagesToShow.map((item, index) => (
-  //         <TouchableOpacity 
-  //           key={index} 
-  //           style={{ width: width / 2, height: width / 2 }}
-  //           activeOpacity={0.9}
-  //           onPress={() => openGallery(index)} // กดเพื่อเปิด Gallery
-  //         >
-  //           <Image
-  //             source={{ uri: item.image_path }} 
-  //             style={{
-  //               width: "100%", 
-  //               height: "100%", 
-  //               borderWidth: 0.5,
-  //               borderColor: "#fff",
-  //             }}
-  //           />
-  //           {index === 3 && remainingCount > 0 && (
-  //             <View
-  //               style={{
-  //                 position: "absolute",
-  //                 top: 0, left: 0, right: 0, bottom: 0,
-  //                 backgroundColor: "rgba(0,0,0,0.5)",
-  //                 justifyContent: "center",
-  //                 alignItems: "center",
-  //               }}
-  //             >
-  //               <Text style={{ color: "#fff", fontSize: 24, fontWeight: "bold" }}>
-  //                 +{remainingCount}
-  //               </Text>
-  //             </View>
-  //           )}
-  //         </TouchableOpacity>
-  //       ))}
-  //     </View>
-  //   );
-  // };
+      <Modal
+        visible={modalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <TouchableOpacity 
+            style={styles.closeButton} 
+            onPress={() => setModalVisible(false)}
+          >
+            <Text style={styles.closeText}>✕ Close</Text>
+          </TouchableOpacity>
 
-  // return (
-  //   <View style={{ marginTop: 7 }}>
-  //     {/* เส้นแบ่ง */}
-  //     <View style={{ height: 1, backgroundColor: "#11A4E1", opacity: 0.2, width: "100%" }} />
-
-  //     <View>
-  //       {/* ส่วนหัวโพสต์ */}
-  //       <View style={{ flexDirection: "row", alignItems: "center", padding: 12 }}>
-  //         <Image
-  //           source={{ uri: user?.avatar_url?.uri || user?.avatar_url || "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQhA_VuqI8DqCHBMlOg_Y6KMjEuJsX_prJX9g&s" }}
-  //           style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: "#eee" }}
-  //         />
-  //         <View style={{ marginLeft: 10 }}>
-  //           <Text style={{ fontWeight: "bold", fontSize: 16, color: "#000" }}>
-  //             {user ? user.name : "Loading..."}
-  //           </Text>
-  //           <View style={{ flexDirection: "row", alignItems: "center" }}>
-  //             <Text style={{ color: "gray", fontSize: 12 }}>
-  //               {formatDate(data?.created_at)}
-  //             </Text>
-  //             <Text style={{ color: "gray", fontSize: 12, marginHorizontal: 4 }}>•</Text>
-  //             <Text style={{ color: "gray", fontSize: 10 }}>🌍</Text>
-  //           </View>
-  //         </View>
-  //       </View>
-
-  //       {/* ข้อความ Note */}
-  //       <Text style={{ paddingHorizontal: 12, marginBottom: 10, fontSize: 15, color: "#000" }}>
-  //         {data?.note || ""}
-  //       </Text>
-
-  //       {/* รูปภาพ */}
-  //       {renderImages()}
-  //     </View>
-
-  //     {/* --- Modal Gallery --- */}
-  //     <Modal
-  //       visible={modalVisible}
-  //       transparent={true}
-  //       animationType="fade"
-  //       onRequestClose={() => setModalVisible(false)}
-  //     >
-  //       <SafeAreaView style={styles.modalContainer}>
-  //         {/* ปุ่มปิด */}
-  //         <TouchableOpacity 
-  //           style={styles.closeButton} 
-  //           onPress={() => setModalVisible(false)}
-  //         >
-  //           <Text style={styles.closeText}>✕ Close</Text>
-  //         </TouchableOpacity>
-
-  //         {/* รายการรูปภาพแบบเลื่อนดูได้ */}
-  //         <FlatList
-  //           data={postImages}
-  //           horizontal
-  //           pagingEnabled // ทำให้เลื่อนทีละรูป
-  //           initialScrollIndex={initialIndex} // เริ่มต้นที่รูปที่กดมา
-  //           onScrollToIndexFailed={() => {}} // ป้องกัน error ถ้า scroll เร็วไป
-  //           showsHorizontalScrollIndicator={false}
-  //           keyExtractor={(item, index) => index.toString()}
-  //           renderItem={({ item }) => (
-  //             <View style={{ width: width, height: height * 0.8, justifyContent: 'center' }}>
-  //               <Image
-  //                 source={{ uri: item.image_path }}
-  //                 style={{ width: "100%", height: "100%" }}
-  //                 resizeMode="contain" // แสดงรูปเต็มใบไม่โดนตัด
-  //               />
-  //             </View>
-  //           )}
-  //         />
-  //       </SafeAreaView>
-  //     </Modal>
-  //   </View>
-  // );
+          <FlatList
+            data={postImages}
+            horizontal
+            pagingEnabled
+            initialScrollIndex={initialIndex}
+            onScrollToIndexFailed={() => {}}
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(item, index) => index.toString()}
+            renderItem={({ item }) => (
+              <View style={{ width: width, height: height * 0.8, justifyContent: 'center' }}>
+                <Image
+                  source={{ uri: item.image_path }}
+                  style={{ width: "100%", height: "100%" }}
+                  resizeMode="contain"
+                />
+              </View>
+            )}
+          />
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
 };
 
 const styles = StyleSheet.create({

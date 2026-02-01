@@ -8,12 +8,17 @@ import {
   ActivityIndicator,
   Alert,
 } from "react-native";
+import NetInfo from "@react-native-community/netinfo";
 
 import Navbar from "../components/Navbar";
 import Post from "../components/Post";
 const logo = require("../assets/logo1.png");
 
-import { getLocalUser } from "../services/sqlite-service";
+import {
+  getLocalUser,
+  getCachedPosts,
+  saveCachedPosts,
+} from "../services/sqlite-service";
 import { readPost } from "../services/firebase-service";
 
 const Home = ({ navigation, route }) => {
@@ -23,8 +28,28 @@ const Home = ({ navigation, route }) => {
   const scrollViewRef = useRef(null);
 
   const loadData = async () => {
-    const fetchedPosts = await readPost();
-    setPosts(fetchedPosts);
+    try {
+      // 1. โหลดจาก SQLite มาแสดงก่อน (เพื่อให้เห็นข้อมูลเก่าทันที)
+      const localPosts = await getCachedPosts();
+      if (localPosts) {
+        setPosts(localPosts);
+      }
+
+      // 2. เช็คเน็ต ถ้ามีเน็ต ให้ดึงจาก Firebase มา Sync
+      const netState = await NetInfo.fetch();
+      if (netState.isConnected) {
+        const fetchedPosts = await readPost();
+        
+        // ✅ แก้ไขตรงนี้: ตรวจสอบแค่ว่าเป็น Array หรือไม่ (ไม่ต้องเช็ค length > 0)
+        // เพื่อให้กรณีที่ลบข้อมูลหมดเกลี้ยง (fetchedPosts = []) ก็จะถูกบันทึกทับลงไป
+        if (fetchedPosts) {
+          setPosts(fetchedPosts);
+          await saveCachedPosts(fetchedPosts); // ฟังก์ชันนี้จะล้างของเก่าและใส่ของใหม่ให้เอง
+        }
+      }
+    } catch (error) {
+      console.log("Load data error:", error);
+    }
   };
 
   const checkUserAndFetch = async () => {
@@ -48,7 +73,6 @@ const Home = ({ navigation, route }) => {
     setRefreshing(false);
   }, []);
 
-  // ทำงานครั้งแรกเมื่อเข้าหน้า Home
   useEffect(() => {
     checkUserAndFetch();
   }, []);
@@ -60,7 +84,6 @@ const Home = ({ navigation, route }) => {
     }
   }, [route.params?.refreshId]);
 
-  // แสดงหน้าจอโหลดก่อนเข้าหน้าหลัก
   if (loading) {
     return (
       <View
@@ -118,7 +141,6 @@ const Home = ({ navigation, route }) => {
           <Text style={{ opacity: 0.5 }}>chicken blood cells.</Text>
         </View>
 
-        {/* วนลูปแสดง Post ตามข้อมูลที่ได้จาก Predictions */}
         {posts.map((item) => (
           <Post key={item.id} data={item} />
         ))}

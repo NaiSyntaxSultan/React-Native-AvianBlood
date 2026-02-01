@@ -1,18 +1,29 @@
 import React from "react";
 import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
+import { Feather } from "@expo/vector-icons";
 
-export default function HistoryItemCard({ item, onPress = () => {} }) {
+export default function HistoryItemCard({
+  item,
+  pendingDelete = false,
+  onPress = () => {},
+}) {
   const dtText = formatDateTime(item.datetime);
+  const displayTitle = (item.note && item.note.trim() !== "") 
+    ? item.note 
+    : "รอการวิเคราะห์";
 
   return (
     <TouchableOpacity
-      style={styles.card}
+      style={[
+        styles.card,
+        pendingDelete && styles.cardPending,
+      ]}
       activeOpacity={0.85}
-      onPress={onPress}
+      onPress={!pendingDelete ? onPress : undefined}
     >
       <View style={styles.left}>
         <Text style={styles.title} numberOfLines={2}>
-          {item.title}
+          {item.displayLabel}
         </Text>
 
         <View style={styles.metaRow}>
@@ -30,6 +41,16 @@ export default function HistoryItemCard({ item, onPress = () => {} }) {
               text={item.stain}
               variant={item.stain === "Wright" ? "purple" : "danger"}
             />
+          )}
+
+          {/* 🔥 ICON แสดงว่ารายการนี้ถูกลบแล้ว รอเน็ต */}
+          {pendingDelete && (
+            <View style={styles.pendingRow}>
+              <Feather name="trash-2" size={12} color="#F59E0B" />
+              <Text style={styles.pendingText}>
+                Waiting for internet...
+              </Text>
+            </View>
           )}
         </View>
       </View>
@@ -94,6 +115,13 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     backgroundColor: "#fff",
   },
+
+  /* 🔥 ตอนรอเน็ต */
+  cardPending: {
+    opacity: 0.6,
+    borderColor: "#F59E0B",
+  },
+
   left: { flex: 1, paddingRight: 10 },
   right: { width: 52, alignItems: "flex-end" },
 
@@ -103,16 +131,30 @@ const styles = StyleSheet.create({
     color: "#111827",
     marginBottom: 8,
   },
+
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
     flexWrap: "wrap",
     gap: 8,
   },
+
   datetime: {
     fontSize: 11,
     color: "#6b7280",
     marginRight: 4,
+  },
+
+  /* 🔥 pending delete row */
+  pendingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  pendingText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#F59E0B",
   },
 
   thumb: {
@@ -137,8 +179,8 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
 
-  badgeSuccess: { backgroundColor: "#B9F6CA" }, // เขียว Predict
-  badgeWarning: { backgroundColor: "#FFD59E" }, // ส้ม Pending
-  badgeDanger: { backgroundColor: "#FFB3B3" }, // แดง Giemsa
-  badgePurple: { backgroundColor: "#D6C4FF" }, // ม่วง Wright
+  badgeSuccess: { backgroundColor: "#B9F6CA" },
+  badgeWarning: { backgroundColor: "#FFD59E" },
+  badgeDanger: { backgroundColor: "#FFB3B3" },
+  badgePurple: { backgroundColor: "#D6C4FF" },
 });

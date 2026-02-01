@@ -7,14 +7,16 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  ActivityIndicator
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Navbar from "../components/Navbar";
 import HeaderBar from "../components/HeaderBar";
 import * as ImagePicker from "expo-image-picker";
 
-import { updateUser} from "../services/firebase-service";
+import NetInfo from "@react-native-community/netinfo";
+
+import { updateUser } from "../services/firebase-service";
 import {
   getLocalUser,
   logoutLocalUser,
@@ -27,25 +29,68 @@ export default function Profile({ navigation }) {
 
   const [user, setUser] = useState(null);
   const [draft, setDraft] = useState({});
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const performSync = async () => {
+    const localUser = getLocalUser();
+
+    if (localUser && localUser.is_synced === 0) {
+      console.log("AutoSync: Found unsynced data, trying to push...");
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) {
+          console.log("AutoSync: No internet, skipping.");
+          return;
+      }
+      setIsSyncing(true);
+      try {
+        await updateUser(localUser.firebase_id, {
+          name: localUser.name,
+          username: localUser.username,
+          email: localUser.email,
+          password: localUser.password,
+          phone_number: localUser.phone_number,
+          avatar_uri: localUser.avatar_uri,
+        });
+        await saveLocalUser({ ...localUser, is_synced: 1 });
+        const syncedUser = { ...localUser, is_synced: 1 };
+        setUser(syncedUser);
+        setDraft(syncedUser);
+        console.log("AutoSync: Success!");
+      } catch (err) {
+        console.log("AutoSync Failed:", err);
+      } finally {
+        setIsSyncing(false);
+      }
+    }
+  };
 
   useEffect(() => {
-    const loadUser = () => {
+    const initialLoad = () => {
       const localUser = getLocalUser();
       if (localUser) {
-        console.log("Loaded Profile:", localUser.name);
         setUser(localUser);
         setDraft(localUser);
       } else {
         navigation.replace("Login");
       }
     };
-    loadUser();
+    initialLoad();
+
+    performSync();
+
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected) {
+        performSync();
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   if (!user) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" color="#0F2C42" /> 
+        <ActivityIndicator size="large" color="#0F2C42" />
       </View>
     );
   }
@@ -90,33 +135,47 @@ export default function Profile({ navigation }) {
     if (!draft.email.includes("@"))
       return Alert.alert("Error", "Email ไม่ถูกต้อง");
 
+    let syncStatus = 0;
+
     try {
-        await updateUser(user.firebase_id, {
-            name: draft.name,
-            username: draft.username,
-            email: draft.email,
-            password: draft.password,
-            phone_number: draft.phone_number,
-            avatar_uri: draft.avatar_uri,
-        });
 
-        const isSaved = saveLocalUser({
-            ...draft,
-            is_synced: 1
-        });
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) {
+         throw new Error("No Internet Connection"); 
+      }
 
-        if (isSaved) {
-            setUser(draft);
-            setIsEditing(false);
-            setShowPassword(false);
-            Alert.alert("Success", "บันทึกข้อมูลเรียบร้อย");
+      await updateUser(user.firebase_id, {
+        name: draft.name,
+        username: draft.username,
+        email: draft.email,
+        password: draft.password,
+        phone_number: draft.phone_number,
+        avatar_uri: draft.avatar_uri,
+      });
+
+      syncStatus = 1;
+      } catch (error) {
+        console.log("Cloud Update Error (Offline?):", error);
+        syncStatus = 0; 
+    }
+
+      const isSaved = await saveLocalUser({
+        ...draft,
+        is_synced: syncStatus,
+      });
+
+      if (isSaved) {
+        setUser({ ...draft, is_synced: syncStatus });
+        setIsEditing(false);
+        setShowPassword(false);
+
+        if (syncStatus === 1) {
+          Alert.alert("Success", "บันทึกข้อมูลเรียบร้อย (Synced)");
         } else {
-            Alert.alert("Warning", "บันทึกบน Cloud สำเร็จ แต่ลงเครื่องล้มเหลว");
+          Alert.alert("Offline Saved", "บันทึกลงเครื่องเรียบร้อย (จะซิงค์เมื่อต่อเน็ตใหม่)");
         }
-
-    } catch (error) {
-      console.error("Update Error:", error);
-      Alert.alert("Error", "เกิดข้อผิดพลาด: " + error.message);
+      } else {
+        Alert.alert("Error", "บันทึกข้อมูลลงเครื่องล้มเหลว");
     }
   };
 
@@ -151,7 +210,11 @@ export default function Profile({ navigation }) {
             >
               <View style={{ position: "relative" }}>
                 <Image
-                  source={isEditing ? {uri: draft.avatar_uri} : {uri: user.avatar_uri}}
+                  source={
+                    isEditing
+                      ? { uri: draft.avatar_uri }
+                      : { uri: user.avatar_uri }
+                  }
                   style={{
                     width: 86,
                     height: 86,
@@ -326,7 +389,7 @@ export default function Profile({ navigation }) {
           style={{ paddingHorizontal: 18, marginTop: 30, marginBottom: 20 }}
         >
           <TouchableOpacity
-            onPress={()=>handleLogout()}
+            onPress={() => handleLogout()}
             style={{
               backgroundColor: "#EF4444",
               paddingVertical: 14,
